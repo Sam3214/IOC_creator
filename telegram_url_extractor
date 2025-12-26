@@ -1,0 +1,159 @@
+
+import json
+from datetime import timezone
+from telethon import TelegramClient
+
+# ====== CONFIG ======
+api_id =             # <-- replace with your api_id (int)
+api_hash = ""   # <-- replace with your api_hash (str)
+target_group = "ThreatHuntingFather"
+
+# Number of recent messages to fetch
+limit = 200
+
+# Output file
+output_json = "telegram_group_messages.json"
+# ====================
+
+# Get list of groups
+
+# async def main():
+#     async for dialog in client.iter_dialogs():
+#         # Groups and channels show up as "is_group" or "is_channel"
+#         if dialog.is_group or dialog.is_channel:
+#             ent = dialog.entity
+#             username = getattr(ent, "username", None)
+#             print(f"{dialog.name} | id={dialog.id} | username=@{username}" if username else f"{dialog.name} | id={dialog.id} | username=None")
+
+# ---------------------------------------------------------------------------------
+
+
+import re
+
+# Matches:
+# - http:// or https:// URLs
+# - www.<domain> URLs (normalized to https://)
+# - bare domains like example.com/path (optional; included below)
+#
+# Notes:
+# - Avoids capturing trailing punctuation like ), ], ., , etc.
+# - Supports querystrings/fragments.
+_URL_REGEX = re.compile(
+    r"""
+    (?xi)                                   # case-insensitive, verbose
+    \b(
+        (?:https?://|ftp://)                # scheme
+        [^\s<>"']+                          # everything up to a space or a delimiter
+        |
+        (?:www\.)                           # www.
+        [^\s<>"']+                          # everything up to a space or a delimiter
+    )
+    """,
+    re.VERBOSE | re.IGNORECASE
+)
+
+# Characters that often cling to URLs in chat but aren't part of the URL
+_TRAILING_PUNCT = '.,;:!?)]}\'"…'
+
+def extract_urls_regex(text: str):
+    """
+    Extract URLs from raw message text using regex.
+    Returns a list of URLs (deduped, stable order) normalized to include a scheme.
+    """
+    if not text:
+        return []
+
+    candidates = _URL_REGEX.findall(text)
+    cleaned = []
+
+    for u in candidates:
+        # Strip common trailing punctuation repeatedly
+        u = u.strip()
+        while u and u[-1] in _TRAILING_PUNCT:
+            u = u[:-1]
+
+        # Handle balanced parentheses edge: "(https://x.y/z)" -> strip outer ')'
+        # (We already strip ')', but this is here in case you remove it from _TRAILING_PUNCT)
+        u = u.strip()
+
+        # Normalize www.* to https://
+        if u.lower().startswith("www."):
+            u = "https://" + u
+
+        cleaned.append(u)
+
+    # Deduplicate while preserving order
+    seen = set()
+    out = []
+    for u in cleaned:
+        if u =="https://" or u == "https://google.com" or u == "http://":
+            continue
+        if u and u not in seen:
+            seen.add(u)
+            out.append(u)
+        
+    return out
+
+# ---------------------------------------------------------------------------------
+
+import json
+from datetime import timezone,datetime,timedelta
+from telethon import TelegramClient
+from telethon.errors import UsernameNotOccupiedError, UsernameInvalidError
+from telethon.errors.rpcerrorlist import ChannelPrivateError
+
+
+from telethon.tl.types import MessageEntityUrl, MessageEntityTextUrl
+
+limit_per_group = 200
+
+output_json = "telegram_messages_multi_groups.json"
+output_file = "urls.txt"
+
+BLACKLIST = ["learn.microsoft.com","t.me","youtube.com"]
+
+async def main():
+    entity = await client.get_entity(target_group)
+    group_name = getattr(entity, "title", str(target_group))
+    urls_only = []
+    data = []
+    cutoff = datetime.now(timezone.utc) - timedelta(days=1)
+    async for msg in client.iter_messages(entity, limit=limit):
+        # msg.date is typically UTC already; normalize explicitly
+        msg_date_utc = msg.date.astimezone(timezone.utc).isoformat()
+
+        # if msg.date < cutoff:
+        #     continue
+
+
+        # msg.message can be None for media-only messages
+        msg_text = msg.message if msg.message else ""
+
+        # extracting urls
+        msg_urls = extract_urls_regex(msg_text)
+
+        for url in msg_urls:
+            urls_only.append(url)
+
+    urls_only = list(set(urls_only))
+    for url in urls_only:
+        for bl in BLACKLIST:
+            if bl in url:
+                urls_only.remove(url)
+    
+    print(urls_only,len(urls_only))
+    with open(output_file, "w") as f:
+        f.write(str(urls_only))
+
+
+if __name__ == "__main__":
+    client = TelegramClient("telegram", api_id, api_hash)
+    with client:
+        client.loop.run_until_complete(main())
+
+
+
+if __name__ == "__main__":
+    client = TelegramClient("telegram", api_id, api_hash)
+    with client:
+        client.loop.run_until_complete(main())
